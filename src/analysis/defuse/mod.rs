@@ -76,7 +76,7 @@ pub fn categorize(context: PlaceContext) -> Option<DefUse> {
         // uses in drop are special because `#[may_dangle]`
         // attributes can affect whether lifetimes must be live.
 
-        PlaceContext::MutatingUse(MutatingUseContext::Drop) =>
+        PlaceContext::MutatingUse(MutatingUseContext::Drop)   =>
             Some(DefUse::Drop),
 
         // Debug info is neither def nor use.
@@ -85,6 +85,7 @@ pub fn categorize(context: PlaceContext) -> Option<DefUse> {
         PlaceContext::MutatingUse(MutatingUseContext::Deinit | MutatingUseContext::SetDiscriminant) => {
             None
         }
+PlaceContext::NonUse(NonUseContext::BackwardIncompatibleDropHint) => None
     }
 }
 
