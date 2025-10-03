@@ -9,7 +9,7 @@ use rustc_hash::FxHashMap;
 use rustc_middle::mir::visit::{MutatingUseContext, NonMutatingUseContext, PlaceContext, Visitor};
 use rustc_middle::mir::{Body, Local, Location, TerminatorKind};
 use rustc_middle::ty::EarlyBinder;
-use rustc_middle::ty::{self, Instance, TypingEnv, TyCtxt};
+use rustc_middle::ty::{self, Instance, TyCtxt, TypingEnv};
 use rustc_span::Span;
 
 use crate::analysis::callgraph::InstanceId;
