@@ -45,7 +45,7 @@ impl rustc_driver::Callbacks for LockBudCallbacks {
         self.file_name = config
             .input
             .source_name()
-            .prefer_remapped_unconditionaly()
+            .prefer_remapped_unconditionally()
             .to_string();
         debug!("Processing input file: {}", self.file_name);
         if config.opts.test {
