@@ -85,6 +85,7 @@ pub fn categorize(context: PlaceContext) -> Option<DefUse> {
         PlaceContext::MutatingUse(MutatingUseContext::Deinit | MutatingUseContext::SetDiscriminant) => {
             None
         }
+        PlaceContext::NonUse(NonUseContext::BackwardIncompatibleDropHint) => todo!()
     }
 }
 
