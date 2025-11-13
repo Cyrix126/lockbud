@@ -82,7 +82,7 @@ pub fn categorize(context: PlaceContext) -> Option<DefUse> {
         // Debug info is neither def nor use.
         PlaceContext::NonUse(NonUseContext::VarDebugInfo) => None,
 
-        PlaceContext::MutatingUse(MutatingUseContext::Deinit | MutatingUseContext::SetDiscriminant) => {
+        PlaceContext::MutatingUse(MutatingUseContext::SetDiscriminant) => {
             None
         }
         PlaceContext::NonUse(NonUseContext::BackwardIncompatibleDropHint) => todo!()

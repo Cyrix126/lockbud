@@ -581,7 +581,6 @@ impl<'tcx> Visitor<'tcx> for ConstraintGraphCollector<'_, 'tcx> {
             }
             StatementKind::FakeRead(_)
             | StatementKind::SetDiscriminant { .. }
-            | StatementKind::Deinit(_)
             | StatementKind::StorageLive(_)
             | StatementKind::StorageDead(_)
             | StatementKind::Retag(_, _)
