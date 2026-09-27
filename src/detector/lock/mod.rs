@@ -165,29 +165,6 @@ impl<'tcx> DeadlockDetector<'tcx> {
                                     .or_default()
                                     .union_in_place(states[&loc].clone());
                             }
-                        } else if matches!(
-                            callsite,
-                            crate::analysis::callgraph::CallSiteLocation::ClosureDef(_, None)
-                        ) {
-                            let mut closure_context = LiveLockGuards::default();
-                            for state in states.values() {
-                                closure_context.union_in_place(state.clone());
-                            }
-                            let changed = contexts
-                                .get_mut(&callee)
-                                .unwrap()
-                                .union_in_place(closure_context.clone());
-                            if changed {
-                                worklist.push_back(callee);
-                            }
-                            if condvar_apis.contains_key(&callee) {
-                                lockguards_before_condvar_apis
-                                    .entry(callee)
-                                    .or_default()
-                                    .entry((id, Location::START))
-                                    .or_default()
-                                    .union_in_place(closure_context);
-                            }
                         }
                     }
                 }
