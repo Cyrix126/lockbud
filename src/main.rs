@@ -1,7 +1,7 @@
 //! The general rustc plugin framework.
 //! Inspired by <https://github.com/facebookexperimental/MIRAI/blob/9cf3067309d591894e2d0cd9b1ee6e18d0fdd26c/checker/src/main.rs>
 #![feature(rustc_private)]
-#![feature(box_patterns)]
+#![feature(deref_patterns)]
 
 extern crate rustc_driver;
 extern crate rustc_interface;

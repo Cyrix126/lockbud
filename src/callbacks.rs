@@ -12,7 +12,7 @@ use log::{debug, warn};
 use rustc_driver::Compilation;
 use rustc_hir::def_id::LOCAL_CRATE;
 use rustc_interface::interface;
-use rustc_middle::mir::mono::MonoItem;
+use rustc_middle::mono::MonoItem;
 use rustc_middle::ty::{Instance, TyCtxt, TypingEnv};
 
 use crate::analysis::callgraph::CallGraph;

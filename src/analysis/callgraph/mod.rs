@@ -207,14 +207,14 @@ impl<'tcx> Visitor<'tcx> for CallSiteCollector<'_, 'tcx> {
             let func_ty = self.caller.instantiate_mir_and_normalize_erasing_regions(
                 self.tcx,
                 self.typing_env,
-                EarlyBinder::bind(func_ty),
+                EarlyBinder::bind(self.tcx, func_ty),
             );
             if let ty::FnDef(def_id, substs) = *func_ty.kind() {
-                if let Some(callee) =
+                if let Some(callee) = substs.no_bound_vars().and_then(|substs| {
                     Instance::try_resolve(self.tcx, self.typing_env, def_id, substs)
                         .ok()
                         .flatten()
-                {
+                }) {
                     self.callsites
                         .push((callee, CallSiteLocation::Direct(location)));
                 }
@@ -234,7 +234,7 @@ impl<'tcx> Visitor<'tcx> for CallSiteCollector<'_, 'tcx> {
         let func_ty = self.caller.instantiate_mir_and_normalize_erasing_regions(
             self.tcx,
             self.typing_env,
-            EarlyBinder::bind(local_decl.ty),
+            EarlyBinder::bind(self.tcx, local_decl.ty),
         );
         if let TyKind::Closure(def_id, substs) = func_ty.kind() {
             match self.body.local_kind(local) {

@@ -60,12 +60,12 @@ impl<'tcx> Visitor<'tcx> for DataDeps {
     fn visit_assign(&mut self, place: &Place<'tcx>, rvalue: &Rvalue<'tcx>, location: Location) {
         let lhs = place.local;
         match rvalue {
-            Rvalue::Use(operand) | Rvalue::Cast(_, operand, _) | Rvalue::UnaryOp(_, operand) => {
+            Rvalue::Use(operand, _) | Rvalue::Cast(_, operand, _) | Rvalue::UnaryOp(_, operand) => {
                 if let Some(rhs) = operand.place() {
                     self.immediate_deps[rhs.local][lhs] = true;
                 }
             }
-            Rvalue::BinaryOp(_, box (rhs0, rhs1)) => {
+            Rvalue::BinaryOp(_, (rhs0, rhs1)) => {
                 if let Some(rhs0) = rhs0.place() {
                     self.immediate_deps[rhs0.local][lhs] = true;
                 }

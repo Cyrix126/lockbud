@@ -439,7 +439,7 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
         // For compatibility, I create new places: _x[0], _x[1], ...
         // and add constraints for _x[0] = fields[0], _x[1] = fields[1], ...
         // Note that creating new places with mk_place_field is a hack. I need to check it against large projects.
-        if let Rvalue::Aggregate(box AggregateKind::Closure(_def_id, _args), fields) = rvalue {
+        if let Rvalue::Aggregate(AggregateKind::Closure(_def_id, _args), fields) = rvalue {
             for (idx, operand) in fields.iter_enumerated() {
                 if let Some(rhs) = operand.place() {
                     let op_ty = operand.ty(&self.body.local_decls, self.tcx);
@@ -497,7 +497,7 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
             Operand::Move(place) | Operand::Copy(place) => {
                 Some(AccessPattern::Direct(place.as_ref()))
             }
-            Operand::Constant(box ConstOperand {
+            Operand::Constant(ConstOperand {
                 span: _,
                 user_ty: _,
                 const_,
@@ -508,7 +508,7 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
 
     fn process_rvalue(rvalue: &Rvalue<'tcx>) -> Vec<Option<AccessPattern<'tcx>>> {
         match rvalue {
-            Rvalue::Use(operand) | Rvalue::Repeat(operand, _) | Rvalue::Cast(_, operand, _) => {
+            Rvalue::Use(operand, _) | Rvalue::Repeat(operand, _) | Rvalue::Cast(_, operand, _) => {
                 vec![Self::process_operand(operand)]
             }
             // Regard `p = &*q` as `p = q`
@@ -577,14 +577,13 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
 impl<'tcx> Visitor<'tcx> for ConstraintGraphCollector<'_, 'tcx> {
     fn visit_statement(&mut self, statement: &Statement<'tcx>, _location: Location) {
         match &statement.kind {
-            StatementKind::Assign(box (place, rvalue)) => {
+            StatementKind::Assign((place, rvalue)) => {
                 self.process_assignment(place, rvalue);
             }
             StatementKind::FakeRead(_)
             | StatementKind::SetDiscriminant { .. }
             | StatementKind::StorageLive(_)
             | StatementKind::StorageDead(_)
-            | StatementKind::Retag(_, _)
             | StatementKind::AscribeUserType(_, _)
             | StatementKind::Coverage(_)
             | StatementKind::Nop
@@ -620,9 +619,10 @@ impl<'tcx> Visitor<'tcx> for ConstraintGraphCollector<'_, 'tcx> {
                 (&[Operand::Move(arg)], dest) | (&[Operand::Copy(arg)], dest) => {
                     let func_ty = func.ty(self.body, self.tcx);
                     if let TyKind::FnDef(def_id, substs) = func_ty.kind() {
-                        if ownership::is_arc_or_rc_clone(*def_id, substs, self.tcx)
-                            || ownership::is_ptr_read(*def_id, self.tcx)
-                        {
+                        let is_clone = substs.no_bound_vars().is_some_and(|substs| {
+                            ownership::is_arc_or_rc_clone(*def_id, substs, self.tcx)
+                        });
+                        if is_clone || ownership::is_ptr_read(*def_id, self.tcx) {
                             return self.process_alias_copy(arg.as_ref(), dest.as_ref());
                         }
                     }
@@ -642,7 +642,10 @@ impl<'tcx> Visitor<'tcx> for ConstraintGraphCollector<'_, 'tcx> {
                 | (&[Operand::Move(arg0), Operand::Move(arg1), Operand::Copy(_arg2)], _dest) => {
                     let func_ty = func.ty(self.body, self.tcx);
                     if let TyKind::FnDef(def_id, list) = func_ty.kind() {
-                        if is_atomic_ptr_store(*def_id, list, self.tcx) {
+                        if list
+                            .no_bound_vars()
+                            .is_some_and(|list| is_atomic_ptr_store(*def_id, list, self.tcx))
+                        {
                             // AtomicPtr::store(arg0, arg1, ord) equals to arg0 = call(arg1)
                             self.process_call_arg_dest(arg1.as_ref(), arg0.as_ref())
                         }

@@ -264,7 +264,7 @@ impl<'tcx> InvalidFreeDetector<'tcx> {
         instance.instantiate_mir_and_normalize_erasing_regions(
             self.tcx,
             ty::TypingEnv::fully_monomorphized(),
-            EarlyBinder::bind(ty),
+            EarlyBinder::bind(self.tcx, ty),
         )
     }
 

@@ -247,7 +247,7 @@ impl<'a, 'b, 'tcx> LockGuardCollector<'a, 'b, 'tcx> {
             let local_ty = self.instance.instantiate_mir_and_normalize_erasing_regions(
                 self.tcx,
                 self.typing_env,
-                EarlyBinder::bind(local_decl.ty),
+                EarlyBinder::bind(self.tcx, local_decl.ty),
             );
             if let Some(lockguard_ty) = LockGuardTy::from_local_ty(local_ty, self.tcx) {
                 let lockguard_id = LockGuardId::new(self.instance_id, local);
@@ -285,7 +285,7 @@ impl<'tcx> Visitor<'tcx> for LockGuardCollector<'_, '_, 'tcx> {
                                     self.instance.instantiate_mir_and_normalize_erasing_regions(
                                         self.tcx,
                                         self.typing_env,
-                                        EarlyBinder::bind(func_ty),
+                                        EarlyBinder::bind(self.tcx, func_ty),
                                     );
                                 if let ty::FnDef(def_id, _) = *func_ty.kind() {
                                     let fn_name = self.tcx.def_path_str(def_id);
