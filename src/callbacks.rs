@@ -3,8 +3,6 @@
 extern crate rustc_driver;
 extern crate rustc_hir;
 
-use std::path::PathBuf;
-
 use crate::analysis::pointsto::AliasAnalysis;
 use crate::detector::memory::{InvalidFreeDetector, UseAfterFreeDetector};
 use crate::options::{CrateNameList, DetectorKind, Options};
@@ -25,7 +23,6 @@ use crate::detector::report::Report;
 pub struct LockBudCallbacks {
     options: Options,
     file_name: String,
-    output_directory: PathBuf,
     test_run: bool,
 }
 
@@ -34,7 +31,6 @@ impl LockBudCallbacks {
         Self {
             options,
             file_name: String::new(),
-            output_directory: PathBuf::default(),
             test_run: false,
         }
     }
@@ -48,13 +44,6 @@ impl rustc_driver::Callbacks for LockBudCallbacks {
             debug!("in test only mode");
             // self.options.test_only = true;
         }
-        match &config.output_dir {
-            None => {
-                self.output_directory = std::env::temp_dir();
-                self.output_directory.pop();
-            }
-            Some(path_buf) => self.output_directory.push(path_buf.as_path()),
-        }
     }
     fn after_analysis(
         &mut self,
@@ -62,11 +51,11 @@ impl rustc_driver::Callbacks for LockBudCallbacks {
         tcx: TyCtxt<'_>,
     ) -> rustc_driver::Compilation {
         compiler.sess.dcx().abort_if_errors();
-        if self
-            .output_directory
-            .to_str()
-            .expect("valid string")
-            .contains("/build/")
+        // Cargo names build script crates `build_script_<file stem>`.
+        if tcx
+            .crate_name(LOCAL_CRATE)
+            .as_str()
+            .starts_with("build_script_")
         {
             // No need to analyze a build script, but do generate code.
             return Compilation::Continue;
