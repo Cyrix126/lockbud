@@ -230,6 +230,8 @@ impl<'tcx> Visitor<'tcx> for CallSiteCollector<'_, 'tcx> {
     ///
     /// _20 is of type Closure, but it is actually the arg that captures
     /// the variables in the defining function.
+    ///
+    /// Each call taking the closure is recorded as a location where it may run.
     fn visit_local_decl(&mut self, local: Local, local_decl: &LocalDecl<'tcx>) {
         let func_ty = self.caller.instantiate_mir_and_normalize_erasing_regions(
             self.tcx,
@@ -245,12 +247,38 @@ impl<'tcx> Visitor<'tcx> for CallSiteCollector<'_, 'tcx> {
                             .ok()
                             .flatten()
                     {
-                        self.callsites
-                            .push((callee_instance, CallSiteLocation::ClosureDef(local, None)));
+                        let calls = calls_taking(self.body, local);
+                        if calls.is_empty() {
+                            self.callsites
+                                .push((callee_instance, CallSiteLocation::ClosureDef(local, None)));
+                        }
+                        for loc in calls {
+                            self.callsites.push((
+                                callee_instance,
+                                CallSiteLocation::ClosureDef(local, Some(loc)),
+                            ));
+                        }
                     }
                 }
             }
         }
         self.super_local_decl(local, local_decl);
     }
+}
+
+/// Locations of the calls that take `local` as an argument.
+fn calls_taking(body: &Body<'_>, local: Local) -> Vec<Location> {
+    body.basic_blocks
+        .iter_enumerated()
+        .filter_map(|(bb, data)| match &data.terminator().kind {
+            TerminatorKind::Call { args, .. }
+                if args.iter().any(|arg| {
+                    arg.node.place().and_then(|place| place.as_local()) == Some(local)
+                }) =>
+            {
+                Some(body.terminator_loc(bb))
+            }
+            _ => None,
+        })
+        .collect()
 }
