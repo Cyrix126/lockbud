@@ -51,12 +51,7 @@ impl rustc_driver::Callbacks for LockBudCallbacks {
         tcx: TyCtxt<'_>,
     ) -> rustc_driver::Compilation {
         compiler.sess.dcx().abort_if_errors();
-        // Cargo names build script crates `build_script_<file stem>`.
-        if tcx
-            .crate_name(LOCAL_CRATE)
-            .as_str()
-            .starts_with("build_script_")
-        {
+        if is_build_script(tcx) {
             // No need to analyze a build script, but do generate code.
             return Compilation::Continue;
         }
@@ -201,6 +196,16 @@ impl LockBudCallbacks {
             }
         }
     }
+}
+
+/// Cargo compiles a build script as a binary named `build_script_<file stem>`,
+/// without the `CARGO_BIN_NAME` it sets for binary targets.
+fn is_build_script(tcx: TyCtxt<'_>) -> bool {
+    tcx.crate_name(LOCAL_CRATE)
+        .as_str()
+        .starts_with("build_script_")
+        && tcx.entry_fn(()).is_some()
+        && std::env::var_os("CARGO_BIN_NAME").is_none()
 }
 
 fn filter_std_reports(reports: Vec<Report>) -> Vec<Report> {
