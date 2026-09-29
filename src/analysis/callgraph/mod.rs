@@ -26,6 +26,7 @@ use rustc_middle::mir::{
 use rustc_middle::ty::{self, EarlyBinder, Instance, InstanceKind, TyCtxt, TyKind, TypingEnv};
 
 use crate::analysis::pointsto::{Andersen, ConstraintNode, PointsToMap};
+use crate::interest::concurrency::thread::ThreadApi;
 
 /// The NodeIndex in CallGraph, denoting a unique instance in CallGraph.
 pub type InstanceId = NodeIndex;
@@ -205,14 +206,33 @@ impl<'a, 'tcx> CallSiteCollector<'a, 'tcx> {
 
     /// The locations where the closure in `closure` may run: the calls running it or a value
     /// holding it (a `Box`, a reference, a struct), as found by [`ArgUses`].
+    /// A closure run by a spawned thread runs where the thread is joined. A scoped thread is
+    /// also joined when its scope ends, under the locks held when entering this function.
     fn closure_run_locations(&mut self, closure: Local) -> Vec<Location> {
-        self.arg_uses
-            .uses(self.caller, closure)
-            .into_iter()
-            .filter(|(_, call_use)| *call_use == CallUse::Run)
-            .map(|(location, _)| location)
-            .collect()
+        let mut runs = Vec::new();
+        let mut joins = Vec::new();
+        let mut spawn = None;
+        for (location, call_use) in self.arg_uses.uses(self.caller, closure) {
+            match call_use {
+                CallUse::Run => runs.push(location),
+                CallUse::Join => joins.push(location),
+                CallUse::Spawn(api) => spawn = Some(api),
+                CallUse::Store => {}
+            }
+        }
+        match spawn {
+            Some(ThreadApi::SpawnScoped) => {
+                joins.push(Location::START);
+                joins
+            }
+            Some(_) => joins,
+            None => {
+                runs.extend(joins);
+                runs
+            }
+        }
     }
+
     /// Consumes `CallSiteCollector` and returns its callsites when finished visiting.
     fn finish(self) -> impl IntoIterator<Item = (Instance<'tcx>, CallSiteLocation)> {
         self.callsites.into_iter()
@@ -307,19 +327,25 @@ fn resolve_call<'tcx>(
 enum CallUse {
     /// Stores or drops it.
     Store,
-    /// Calls it, if it is a closure.
+    /// Calls it, if it is a closure, or waits for the thread running it.
     Run,
+    /// Runs it on a new thread.
+    Spawn(ThreadApi),
+    /// Waits for the thread whose handle holds it.
+    Join,
 }
+
 impl CallUse {
     /// The use of a value passed to several calls in a function.
     fn combine(self, other: Self) -> Self {
-        if self == Self::Run || other == Self::Run {
-            Self::Run
-        } else {
-            Self::Store
+        match (self, other) {
+            (Self::Run | Self::Join, _) | (_, Self::Run | Self::Join) => Self::Run,
+            (Self::Spawn(api), _) | (_, Self::Spawn(api)) => Self::Spawn(api),
+            _ => Self::Store,
         }
     }
 }
+
 /// Finds how functions use the values passed to them, following the calls they make.
 /// A value passed to a function whose body is unknown is taken as run.
 struct ArgUses<'tcx> {
@@ -380,6 +406,13 @@ impl<'tcx> ArgUses<'tcx> {
         else {
             return CallUse::Run;
         };
+        if let Some(api) = ThreadApi::from_def_id(def_id, self.tcx) {
+            return if api.is_spawn() {
+                CallUse::Spawn(api)
+            } else {
+                CallUse::Join
+            };
+        }
         // `Fn::call`, `FnMut::call_mut` or `FnOnce::call_once` on the value.
         let is_fn_trait_call = self
             .tcx

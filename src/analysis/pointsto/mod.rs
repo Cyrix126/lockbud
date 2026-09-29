@@ -32,6 +32,7 @@ use petgraph::{Directed, Direction, Graph};
 use crate::analysis::callgraph::{CallGraph, CallGraphNode, CallSiteLocation, InstanceId};
 use crate::interest::concurrency::atomic::is_atomic_ptr_store;
 use crate::interest::concurrency::lock::LockGuardId;
+use crate::interest::concurrency::thread::ThreadApi;
 use crate::interest::memory::ownership;
 
 /// Field-sensitive intra-procedural Andersen pointer analysis.
@@ -609,6 +610,15 @@ impl<'tcx> Visitor<'tcx> for ConstraintGraphCollector<'_, 'tcx> {
             ..
         } = &terminator.kind
         {
+            // The handle returned by a thread spawn holds the closure the thread runs.
+            if let TyKind::FnDef(def_id, _) = func.ty(self.body, self.tcx).kind() {
+                if ThreadApi::from_def_id(*def_id, self.tcx).is_some_and(ThreadApi::is_spawn) {
+                    if let Some(closure) = args.last().and_then(|arg| arg.node.place()) {
+                        self.process_call_arg_dest(closure.as_ref(), destination.as_ref());
+                    }
+                    return;
+                }
+            }
             match (
                 args.iter()
                     .map(|x| x.node.clone())

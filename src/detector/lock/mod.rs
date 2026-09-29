@@ -12,6 +12,7 @@ use crate::interest::concurrency::condvar::{CondvarApi, ParkingLotCondvarApi, St
 use crate::interest::concurrency::lock::{
     DeadlockPossibility, LockGuardCollector, LockGuardId, LockGuardMap, LockGuardTy,
 };
+use crate::interest::concurrency::thread::ThreadApi;
 
 use petgraph::algo;
 use petgraph::dot::{Config, Dot};
@@ -135,6 +136,16 @@ impl<'tcx> DeadlockDetector<'tcx> {
             .copied()
             .map(|id| (id, LiveLockGuards::default()))
             .collect::<FxHashMap<_, _>>();
+        // A spawned thread does not hold the lockguards of the thread spawning it.
+        let thread_spawns = callgraph
+            .graph
+            .node_references()
+            .filter(|(_, node)| {
+                ThreadApi::from_def_id(node.instance().def_id(), self.tcx)
+                    .is_some_and(ThreadApi::is_spawn)
+            })
+            .map(|(instance_id, _)| instance_id)
+            .collect::<FxHashSet<_>>();
         // The fixed-point algorithm
         while let Some(id) = worklist.pop_front() {
             if let Some(lockguard_info) = lockguards.get(&id) {
@@ -147,6 +158,9 @@ impl<'tcx> DeadlockDetector<'tcx> {
                 let states = self.intraproc_gen_kill(body, &context, lockguard_info);
                 for edge in callgraph.graph.edges_directed(id, Direction::Outgoing) {
                     let callee = edge.target();
+                    if thread_spawns.contains(&callee) {
+                        continue;
+                    }
                     for callsite in edge.weight() {
                         if let Some(loc) = callsite.location() {
                             let callsite_state = states[&loc].clone();
@@ -171,11 +185,12 @@ impl<'tcx> DeadlockDetector<'tcx> {
             } else {
                 for edge in callgraph.graph.edges_directed(id, Direction::Outgoing) {
                     let callee = edge.target();
-                    // Skip closures without a location where they may run.
-                    if edge
-                        .weight()
-                        .iter()
-                        .all(|callsite| callsite.location().is_none())
+                    // Skip spawned threads, and closures without a location where they may run.
+                    if thread_spawns.contains(&callee)
+                        || edge
+                            .weight()
+                            .iter()
+                            .all(|callsite| callsite.location().is_none())
                     {
                         continue;
                     }
@@ -742,6 +757,20 @@ fn track_callchains<'tcx>(
     let paths = callgraph.all_simple_paths(source, target);
     paths
         .into_iter()
+        // Lockguards do not reach a spawned thread through the spawn.
+        .filter(|path| {
+            !path.iter().any(|id| {
+                ThreadApi::from_def_id(
+                    callgraph
+                        .index_to_instance(*id)
+                        .unwrap()
+                        .instance()
+                        .def_id(),
+                    tcx,
+                )
+                .is_some_and(ThreadApi::is_spawn)
+            })
+        })
         .map(|vec| {
             vec.windows(2)
                 .map(|window| {
