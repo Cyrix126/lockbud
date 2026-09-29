@@ -11,9 +11,10 @@ use rustc_hir::def_id::DefId;
 use rustc_middle::ty::{GenericArg, Instance, List, TyCtxt};
 
 static ATOMIC_API_REGEX: Lazy<FxHashMap<&'static str, Regex>> = Lazy::new(|| {
+    // Also matches the generic `Atomic::<T>` that `AtomicBool`, `AtomicUsize`, etc. alias.
     macro_rules! atomic_api_prefix {
         () => {
-            r"^(std|core)::sync::atomic[:a-zA-Z0-9]*::"
+            r"^(std|core)::sync::atomic[:a-zA-Z0-9]*(::<.*>)?::"
         };
     }
     let mut m = FxHashMap::default();
@@ -46,6 +47,23 @@ mod tests {
         assert!(ATOMIC_API_REGEX["AtomicReadWrite"]
             .is_match("std::sync::atomic::AtomicUsize::compare_and_swap"));
     }
+
+    #[test]
+    fn test_generic_atomic_api_regex() {
+        assert!(ATOMIC_API_REGEX["AtomicRead"].is_match("std::sync::atomic::Atomic::<bool>::load"));
+        assert!(
+            ATOMIC_API_REGEX["AtomicWrite"].is_match("core::sync::atomic::Atomic::<i32>::store")
+        );
+        assert!(ATOMIC_API_REGEX["AtomicReadWrite"]
+            .is_match("std::sync::atomic::Atomic::<i32>::compare_exchange"));
+        assert!(ATOMIC_API_REGEX["AtomicReadWrite"]
+            .is_match("std::sync::atomic::Atomic::<usize>::fetch_add"));
+        assert!(!ATOMIC_API_REGEX["AtomicRead"].is_match("std::sync::atomic::Atomic::<i32>::new"));
+        assert!(!ATOMIC_API_REGEX["AtomicRead"]
+            .is_match("std::sync::atomic::atomic_load::<i32, false>"));
+        assert!(!ATOMIC_API_REGEX["AtomicReadWrite"]
+            .is_match("std::sync::atomic::atomic_compare_exchange::<i32>"));
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
@@ -72,8 +90,9 @@ impl AtomicApi {
 
 // AtomicPtr::store(&self, ptr: *mut T, order: Ordering)
 // Alias: self = ptr
-static ATOMIC_PTR_STORE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^(std|core)::sync::atomic::AtomicPtr::<.*>::store").unwrap());
+static ATOMIC_PTR_STORE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"^(std|core)::sync::atomic::(AtomicPtr::<.*>|Atomic::<\*mut .*>)::store").unwrap()
+});
 
 pub fn is_atomic_ptr_store<'tcx>(
     def_id: DefId,
@@ -93,5 +112,12 @@ mod tests2 {
         assert!(ATOMIC_PTR_STORE.is_match("std::sync::atomic::AtomicPtr::<T>::store"));
         assert!(!ATOMIC_PTR_STORE.is_match("std::sync::atomic::AtomicUsize::store"));
         assert!(!ATOMIC_PTR_STORE.is_match("std::sync::atomic::AtomicPtr::<T>::load"));
+    }
+
+    #[test]
+    fn test_generic_atomic_ptr_store() {
+        assert!(ATOMIC_PTR_STORE.is_match("std::sync::atomic::Atomic::<*mut T>::store"));
+        assert!(!ATOMIC_PTR_STORE.is_match("std::sync::atomic::Atomic::<usize>::store"));
+        assert!(!ATOMIC_PTR_STORE.is_match("std::sync::atomic::Atomic::<*mut T>::load"));
     }
 }
