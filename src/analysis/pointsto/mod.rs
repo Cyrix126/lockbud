@@ -1258,19 +1258,17 @@ fn closure_defsite_args<'a, 'b: 'a, 'tcx>(
     let callers = callgraph.callers(callee_id);
     callers.into_iter().fold(Vec::new(), |mut acc, caller_id| {
         let caller_inst = callgraph.index_to_instance(caller_id).unwrap().instance();
-        acc.extend(
-            callgraph
-                .callsites(caller_id, callee_id)
-                .unwrap_or_default()
-                .iter()
-                .filter_map(|cs_loc| {
-                    if let CallSiteLocation::ClosureDef(local, _) = cs_loc {
-                        Some((caller_inst, *local))
-                    } else {
-                        None
-                    }
-                }),
-        );
+        for cs_loc in callgraph
+            .callsites(caller_id, callee_id)
+            .unwrap_or_default()
+        {
+            // A closure has one `ClosureDef` per location where it may run.
+            if let CallSiteLocation::ClosureDef(local, _) = cs_loc {
+                if !acc.contains(&(caller_inst, local)) {
+                    acc.push((caller_inst, local));
+                }
+            }
+        }
         acc
     })
 }

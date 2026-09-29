@@ -171,6 +171,14 @@ impl<'tcx> DeadlockDetector<'tcx> {
             } else {
                 for edge in callgraph.graph.edges_directed(id, Direction::Outgoing) {
                     let callee = edge.target();
+                    // Skip closures without a location where they may run.
+                    if edge
+                        .weight()
+                        .iter()
+                        .all(|callsite| callsite.location().is_none())
+                    {
+                        continue;
+                    }
                     let context = contexts[&id].clone();
                     let changed = contexts.get_mut(&callee).unwrap().union_in_place(context);
                     if changed {
@@ -744,13 +752,16 @@ fn track_callchains<'tcx>(
                     };
                     let caller_body = tcx.instance_mir(caller_instance.def);
                     let callsites = callgraph.callsites(caller, callee).unwrap();
-                    callsites
+                    // A closure may be recorded at the same location once per local holding it.
+                    let mut locations = callsites
                         .into_iter()
-                        .filter_map(|location| {
-                            location
-                                .location()
-                                .map(|loc| format!("{:?}", caller_body.source_info(loc).span))
-                        })
+                        .filter_map(|callsite| callsite.location())
+                        .collect::<Vec<_>>();
+                    locations.sort();
+                    locations.dedup();
+                    locations
+                        .into_iter()
+                        .map(|loc| format!("{:?}", caller_body.source_info(loc).span))
                         .collect::<Vec<_>>()
                 })
                 .collect::<Vec<_>>()
