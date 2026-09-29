@@ -981,9 +981,7 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
                 };
                 for (def_inst, upvar) in defsite_upvars.iter() {
                     if def_inst.def_id() == instance2.def_id() {
-                        let alias_kind = self
-                            .intraproc_points_to(def_inst, node2.clone(), upvar.clone())
-                            .unwrap_or(ApproximateAliasKind::Unknown);
+                        let alias_kind = self.defsite_upvar_alias(def_inst, node2, upvar);
                         if alias_kind > ApproximateAliasKind::Unlikely {
                             return Some(alias_kind);
                         }
@@ -1002,9 +1000,7 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
                 };
                 for (def_inst, upvar) in defsite_upvars.iter() {
                     if def_inst.def_id() == instance1.def_id() {
-                        let alias_kind = self
-                            .intraproc_points_to(def_inst, node1.clone(), upvar.clone())
-                            .unwrap_or(ApproximateAliasKind::Unknown);
+                        let alias_kind = self.defsite_upvar_alias(def_inst, node1, upvar);
                         if alias_kind > ApproximateAliasKind::Unlikely {
                             return Some(alias_kind);
                         }
@@ -1031,12 +1027,40 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
         Some(ApproximateAliasKind::Unlikely)
     }
 
+    /// Check if `node` points to the closure `upvar` in `def_inst` defining the closure,
+    /// or both point to the same memory, e.g., both are copies of a `&Mutex`.
+    fn defsite_upvar_alias(
+        &mut self,
+        def_inst: &Instance<'tcx>,
+        node: &ConstraintNode<'tcx>,
+        upvar: &ConstraintNode<'tcx>,
+    ) -> ApproximateAliasKind {
+        let points_to = self
+            .intraproc_points_to(def_inst, node.clone(), upvar.clone())
+            .unwrap_or(ApproximateAliasKind::Unknown);
+        if points_to > ApproximateAliasKind::Unlikely {
+            return points_to;
+        }
+        self.intraproc_alias(def_inst, node, upvar)
+            .unwrap_or(ApproximateAliasKind::Unknown)
+    }
+
     fn closure_defsite_upvars(
         &self,
         closure: &'a Instance<'tcx>,
         path: &PointsToPath<'tcx>,
     ) -> Option<Vec<(&'a Instance<'tcx>, ConstraintNode<'tcx>)>> {
-        let projection = closure_defsite_projection(path, self.tcx)?;
+        let mut projection = closure_defsite_projection(path, self.tcx)?;
+        // `Fn` and `FnMut` closures reach their upvars through `&self`,
+        // while the defining function holds the closure itself.
+        let body = self.tcx.instance_mir(closure.def);
+        let env_is_ref = body
+            .args_iter()
+            .next()
+            .is_some_and(|env| body.local_decls[env].ty.is_ref());
+        if let (true, [ProjectionElem::Deref, upvar @ ..]) = (env_is_ref, projection) {
+            projection = upvar;
+        }
         let def_inst_args = closure_defsite_args(closure, self.callgraph);
         let def_inst_upvars = def_inst_args
             .into_iter()
