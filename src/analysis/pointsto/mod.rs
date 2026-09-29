@@ -1293,25 +1293,31 @@ fn dfs_paths_recur<'tcx>(
     path: &mut PointsToPath<'tcx>,
     result: &mut Vec<PointsToPath<'tcx>>,
 ) {
-    // Exit if the node has been visited or is not Alloc or Place.
+    // Exit if the node is already on the path or is not Alloc or Place.
+    // Nodes are unmarked when leaving them, so that each path is found.
     if !visited.insert(node.clone()) {
         return;
     }
     let place = match node {
         ConstraintNode::Alloc(place) | ConstraintNode::Place(place) => place,
-        _ => return,
+        _ => {
+            visited.remove(&node);
+            return;
+        }
     };
     path.push((prev_proj, node.clone()));
     // If found a path to the parameter, then output it to result.
     if is_parameter(place.local, body) {
         result.push(path.clone());
         path.pop();
+        visited.remove(&node);
         return;
     }
     let pts = match points_to_map.get(&node) {
         Some(pts) => pts,
         None => {
             path.pop();
+            visited.remove(&node);
             return;
         }
     };
@@ -1335,4 +1341,5 @@ fn dfs_paths_recur<'tcx>(
         }
     }
     path.pop();
+    visited.remove(&node);
 }
