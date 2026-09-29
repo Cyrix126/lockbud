@@ -669,21 +669,27 @@ pub enum ApproximateAliasKind {
 }
 
 /// Probably > Possibly > Unlikey > Unknown
-impl PartialOrd for ApproximateAliasKind {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+impl Ord for ApproximateAliasKind {
+    fn cmp(&self, other: &Self) -> Ordering {
         use ApproximateAliasKind::*;
         match (*self, *other) {
             (Probably, Probably)
             | (Possibly, Possibly)
             | (Unlikely, Unlikely)
-            | (Unknown, Unknown) => Some(Ordering::Equal),
+            | (Unknown, Unknown) => Ordering::Equal,
             (Probably, _) | (Possibly, Unlikely) | (Possibly, Unknown) | (Unlikely, Unknown) => {
-                Some(Ordering::Greater)
+                Ordering::Greater
             }
             (_, Probably) | (Unlikely, Possibly) | (Unknown, Possibly) | (Unknown, Unlikely) => {
-                Some(Ordering::Less)
+                Ordering::Less
             }
         }
+    }
+}
+
+impl PartialOrd for ApproximateAliasKind {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 
@@ -971,60 +977,71 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
             return Some(ApproximateAliasKind::Possibly);
         }
         // 3. Check if `node1` and `node2` point to upvars of closures and the upvars alias in the def func.
+        // The strongest alias is kept: the upvars come in no particular order.
+        let mut alias_kind = ApproximateAliasKind::Unlikely;
         // 3.1 Get defsite upvars of `node1` then check if `node2` points to the upvar.
-        let mut defsite_upvars1 = Vec::new();
-        if self.tcx.is_closure_like(instance1.def_id()) {
-            let pts_paths = points_to_paths_to_param(node1.clone(), body1, &points_to_map1);
-            for pts_path in pts_paths {
-                let Some(defsite_upvars) = self.closure_defsite_upvars(instance1, &pts_path) else {
-                    continue;
-                };
-                for (def_inst, upvar) in defsite_upvars.iter() {
-                    if def_inst.def_id() == instance2.def_id() {
-                        let alias_kind = self.defsite_upvar_alias(def_inst, node2, upvar);
-                        if alias_kind > ApproximateAliasKind::Unlikely {
-                            return Some(alias_kind);
-                        }
-                    }
-                }
-                defsite_upvars1.extend(defsite_upvars);
+        let defsite_upvars1 = self.defsite_upvars(instance1, node1);
+        for (def_inst, upvar) in defsite_upvars1.iter() {
+            if def_inst.def_id() == instance2.def_id() {
+                alias_kind = alias_kind.max(self.defsite_upvar_alias(def_inst, node2, upvar));
             }
         }
         // 3.2 Get defsite upvars of `node2` then check if `node1` points to the upvar.
-        let mut defsite_upvars2 = Vec::new();
-        if self.tcx.is_closure_like(instance2.def_id()) {
-            let pts_paths = points_to_paths_to_param(node2.clone(), body2, &points_to_map2);
-            for pts_path in pts_paths {
-                let Some(defsite_upvars) = self.closure_defsite_upvars(instance2, &pts_path) else {
-                    continue;
-                };
-                for (def_inst, upvar) in defsite_upvars.iter() {
-                    if def_inst.def_id() == instance1.def_id() {
-                        let alias_kind = self.defsite_upvar_alias(def_inst, node1, upvar);
-                        if alias_kind > ApproximateAliasKind::Unlikely {
-                            return Some(alias_kind);
-                        }
-                    }
-                }
-                defsite_upvars2.extend(defsite_upvars);
+        let defsite_upvars2 = self.defsite_upvars(instance2, node2);
+        for (def_inst, upvar) in defsite_upvars2.iter() {
+            if def_inst.def_id() == instance1.def_id() {
+                alias_kind = alias_kind.max(self.defsite_upvar_alias(def_inst, node1, upvar));
             }
         }
         // 3.3 Check if upvars of `node1` and `node2` alias with each other.
-        if !defsite_upvars1.is_empty() && !defsite_upvars2.is_empty() {
-            for (instance1, node1) in defsite_upvars1 {
-                for (instance2, node2) in &defsite_upvars2 {
-                    if instance1.def_id() == instance2.def_id() {
-                        let alias_kind = self
-                            .intraproc_alias(instance1, &node1, node2)
-                            .unwrap_or(ApproximateAliasKind::Unknown);
-                        if alias_kind > ApproximateAliasKind::Unlikely {
-                            return Some(alias_kind);
-                        }
-                    }
+        for (instance1, node1) in &defsite_upvars1 {
+            for (instance2, node2) in &defsite_upvars2 {
+                if instance1.def_id() == instance2.def_id() {
+                    alias_kind = alias_kind.max(
+                        self.intraproc_alias(instance1, node1, node2)
+                            .unwrap_or(ApproximateAliasKind::Unknown),
+                    );
                 }
             }
         }
-        Some(ApproximateAliasKind::Unlikely)
+        Some(alias_kind)
+    }
+
+    /// The defsite upvars of `node` in `closure`, then those of the closures defining them.
+    fn defsite_upvars<'b>(
+        &mut self,
+        closure: &'b Instance<'tcx>,
+        node: &ConstraintNode<'tcx>,
+    ) -> Vec<(&'b Instance<'tcx>, ConstraintNode<'tcx>)>
+    where
+        'a: 'b,
+    {
+        let mut upvars = Vec::new();
+        let mut worklist = vec![(closure, node.clone())];
+        let mut visited = FxHashSet::default();
+        while let Some((closure, node)) = worklist.pop() {
+            if !self.tcx.is_closure_like(closure.def_id())
+                || !visited.insert((*closure, node.clone()))
+            {
+                continue;
+            }
+            let body = self.tcx.instance_mir(closure.def);
+            let pts_paths = points_to_paths_to_param(
+                node,
+                body,
+                self.get_or_insert_pts(closure.def_id(), body),
+            );
+            for pts_path in pts_paths {
+                for (def_inst, upvar) in self
+                    .closure_defsite_upvars(closure, &pts_path)
+                    .unwrap_or_default()
+                {
+                    worklist.push((def_inst, upvar.clone()));
+                    upvars.push((def_inst, upvar));
+                }
+            }
+        }
+        upvars
     }
 
     /// Check if `node` points to the closure `upvar` in `def_inst` defining the closure,
